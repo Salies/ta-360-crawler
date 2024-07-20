@@ -2,6 +2,7 @@
   "name": "ta-360-crawler",
   "packageManager": "yarn@4.3.1",
   "dependencies": {
+    "better-sqlite3": "^11.1.2",
     "puppeteer": "^22.13.0",
     "puppeteer-core": "^22.13.0",
     "puppeteer-extra": "^3.3.6",
@@ -9,6 +10,7 @@
   },
   "type": "module",
   "scripts": {
-    "getGames": "node getGames"
+    "getGames": "node getGames",
+    "evalGames": "node gameEvaluate"
   }
 }
