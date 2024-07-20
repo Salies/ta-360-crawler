@@ -34,18 +34,36 @@ function gameConstructor(name, taScore, gamerscore, url, pctComplete, medium, de
     return game;
 }
 
+// utility function
 const delay = ms => new Promise(res => setTimeout(res, ms));
+
+// create db
+const db = new Database('data/games.db');
+db.pragma('journal_mode = WAL');
+
+db.exec('CREATE TABLE IF NOT EXISTS games (name TEXT, taScore INTEGER, gamerscore INTEGER, taRatio REAL, url TEXT, pctComplete REAL, medium TEXT, delisted BOOLEAN, achievements INTEGER, discontinued INTEGER, hasAchievementsStill BOOLEAN, liveBrazil BOOLEAN)');
+// index to verify a game's existence faster
+db.exec('CREATE INDEX IF NOT EXISTS idx_games_name ON games (name)');
 
 // open data/allGames.json
 const allGames = JSON.parse(fs.readFileSync('data/allGames.json', 'utf8'));
+const gameCount = allGames.length;
 
-const browser = await puppeteer.launch({
-  headless:false
-});
+const browser = await puppeteer.launch();
 
 const page = await browser.newPage();
 
+let i = 1;
 for (const game of allGames) {
+    console.log(`Processing game ${i}/${gameCount}: ${game.name}`);
+    const stmtCheck = db.prepare('SELECT COUNT(*) FROM games WHERE name = ?');
+    const count = stmtCheck.get(game.name)['COUNT(*)'];
+    if (count !== 0) {
+        console.log('Game already in database, skipping');
+        i++;
+        continue;
+    }
+
     await page.goto(game.url);
 
     // get warning panels
@@ -54,11 +72,11 @@ for (const game of allGames) {
         return await panel.evaluate(node => node.innerText);
     }));
 
-    let delisted = false;
+    let delisted = 0;
     let nDiscontinued = 0;
     for (const panel of wPanelsContent) {
         if (panel.includes('This game has been removed from the Microsoft Store')) {
-            delisted = true;
+            delisted = 1;
         }
         if (panel.toLowerCase().includes('discontinued')) {
             const dPanel = panel.split(' ');
@@ -74,11 +92,13 @@ for (const game of allGames) {
         nAchievements = parseInt(achCountTxt);
     }
 
+    // WARNING TODO: BROKEN
     // get content of #frm > div.page.ta > div.main.middle > aside > section.blue.content-options > article > div:nth-child(2) > div > div > div.price > span
     const gamePrice = await page.$('#frm > div.page.ta > div.main.middle > aside > section.blue.content-options > article > div:nth-child(2) > div > div > div.price > span');
     let inBrazil = false;
     if (gamePrice !== null) {
         const gamePriceTxt = await gamePrice.evaluate(node => node.innerText);
+        console.log(gamePriceTxt);
         if (gamePriceTxt.includes('R$')) {
             inBrazil = true;
         }
@@ -86,6 +106,30 @@ for (const game of allGames) {
 
     // get content of #frm > div.page.ta > div.main.middle > aside > section.navy.gameinfo > article > dl > dd:nth-child(14)
     const gameMedium = await page.$('#frm > div.page.ta > div.main.middle > aside > section.navy.gameinfo > article > dl > dd:nth-child(14)');
+    if (gameMedium === null) {
+        console.log('Could not find medium for game. Adding blank properties.');
+        const gameObj = gameConstructor(
+            game.name,
+            0,
+            0,
+            game.url,
+            0,
+            "unknown",
+            0,
+            0,
+            0,
+            0
+        );
+
+        const stmt = db.prepare('INSERT INTO games (name, taScore, gamerscore, taRatio, url, pctComplete, medium, delisted, achievements, discontinued, hasAchievementsStill, liveBrazil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        stmt.run(gameObj.name, gameObj.taScore, gameObj.gamerscore, gameObj.taRatio, gameObj.url, gameObj.pctComplete, gameObj.medium, gameObj.delisted, gameObj.achievements, gameObj.discontinued, gameObj.hasAchievementsStill, gameObj.liveBrazil);
+
+        i++;
+        await delay(500);
+
+        continue;
+    }
+
     const gameMediumTxt = await gameMedium.evaluate(node => node.innerText);
     const medium = mediumMap[gameMediumTxt];
 
@@ -102,91 +146,14 @@ for (const game of allGames) {
         inBrazil
     );
 
-    console.log(gameObj);
-
-    // save gameObj to database
-
+    const stmt = db.prepare('INSERT INTO games (name, taScore, gamerscore, taRatio, url, pctComplete, medium, delisted, achievements, discontinued, hasAchievementsStill, liveBrazil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    stmt.run(gameObj.name, gameObj.taScore, gameObj.gamerscore, gameObj.taRatio, gameObj.url, gameObj.pctComplete, gameObj.medium, gameObj.delisted, gameObj.achievements, gameObj.discontinued, gameObj.hasAchievementsStill, gameObj.liveBrazil);
+    
+    i++;
+    await delay(500);
     break;
 }
 
-/*const gamePageTest = 'https://www.trueachievements.com/game/Abyss-Odyssey/achievements';
-//const gamePageTest = 'https://www.trueachievements.com/game/1-vs-100/achievements';
-await page.goto(gamePageTest);
+db.close();
 
-// get warning panels
-const wPanels = await page.$$('.warningspanel');
-const wPanelsContent = await Promise.all(wPanels.map(async panel => {
-    return await panel.evaluate(node => node.innerText);
-}));
-
-let delisted = false;
-let nDiscontinued = 0;
-for (const panel of wPanelsContent) {
-    if (panel.includes('This game has been removed from the Microsoft Store')) {
-        delisted = true;
-    }
-    if (panel.toLowerCase().includes('discontinued')) {
-        const dPanel = panel.split(' ');
-        nDiscontinued = parseInt(dPanel[3]);
-    }
-}
-
-console.log(delisted, nDiscontinued);
-
-// get content of #frm > div.page.ta > div.main.middle > main > div.pnl-hd.no-pills.game > div.info > div.l.l1 > div:nth-child(3) > span
-const achCount = await page.$('#frm > div.page.ta > div.main.middle > main > div.pnl-hd.no-pills.game > div.info > div.l.l1 > div:nth-child(3) > span');
-let nAchievements = 0;
-if (achCount !== null) {
-    const achCountTxt = await achCount.evaluate(node => node.innerText);
-    nAchievements = parseInt(achCountTxt);
-}
-
-console.log(nAchievements);
-
-// get content of #frm > div.page.ta > div.main.middle > aside > section.blue.content-options > article > div:nth-child(2) > div > div > div.price > span
-const gamePrice = await page.$('#frm > div.page.ta > div.main.middle > aside > section.blue.content-options > article > div:nth-child(2) > div > div > div.price > span');
-let inBrazil = false;
-if (gamePrice !== null) {
-    const gamePriceTxt = await gamePrice.evaluate(node => node.innerText);
-    if (gamePriceTxt.includes('R$')) {
-        inBrazil = true;
-    }
-}
-
-console.log(inBrazil);
-
-// get content of #frm > div.page.ta > div.main.middle > aside > section.navy.gameinfo > article > dl > dd:nth-child(14)
-const gameMedium = await page.$('#frm > div.page.ta > div.main.middle > aside > section.navy.gameinfo > article > dl > dd:nth-child(14)');
-const gameMediumTxt = await gameMedium.evaluate(node => node.innerText);
-const medium = mediumMap[gameMediumTxt];
-
-console.log(medium);
-
-const gameObj = gameConstructor(
-    sampleGame.name,
-    sampleGame.taScore,
-    sampleGame.gamerscore,
-    sampleGame.url,
-    sampleGame.pctComplete,
-    medium,
-    delisted,
-    nAchievements,
-    nDiscontinued,
-    inBrazil
-);
-
-console.log(gameObj);
-
-await browser.close();*/
-
-/*const db = new Database('data/games.db');
-db.pragma('journal_mode = WAL');
-
-db.exec('CREATE TABLE IF NOT EXISTS games (name TEXT, taScore INTEGER, gamerscore INTEGER, taRatio REAL, url TEXT, pctComplete REAL, medium TEXT, delisted BOOLEAN, achievements INTEGER, discontinued INTEGER, hasAchievementsStill BOOLEAN, liveBrazil BOOLEAN)');
-db.exec('CREATE INDEX IF NOT EXISTS idx_games_name ON games (name)');
-
-const testGame = gameConstructor('teste', 2.5, 1, 'aaa', 0.5, 'digital', 0, 10, 9, 0);
-
-const stmt = db.prepare('INSERT INTO games (name, taScore, gamerscore, taRatio, url, pctComplete, medium, delisted, achievements, discontinued, hasAchievementsStill, liveBrazil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-stmt.run(testGame.name, testGame.taScore, testGame.gamerscore, testGame.taRatio, testGame.url, testGame.pctComplete, testGame.medium, testGame.delisted, testGame.achievements, testGame.discontinued, testGame.hasAchievementsStill, testGame.liveBrazil);*/
-
+await browser.close();

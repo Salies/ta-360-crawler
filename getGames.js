@@ -9,9 +9,7 @@ puppeteer.use(
   })
 )
 
-const browser = await puppeteer.launch({
-  headless:false
-});
+const browser = await puppeteer.launch();
 const page = await browser.newPage();
 
 let allGames = [];
