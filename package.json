@@ -11,6 +11,8 @@
   "type": "module",
   "scripts": {
     "getGames": "node getGames",
-    "evalGames": "node gameEvaluate"
+    "evalGames": "node gameEvaluate",
+    "sale": "node sale",
+    "checkBrazil": "node checkBrazil"
   }
 }
